@@ -5,6 +5,7 @@ License: Apache-2.0, http://www.apache.org/licenses/
 """
 
 import asyncio
+from string import digits
 from typing import Final
 
 from bleak.backends.characteristic import BleakGATTCharacteristic
@@ -29,7 +30,7 @@ class BMS(BaseBMS):
     def __init__(self, ble_device: BLEDevice, keep_alive: bool = True) -> None:
         """Initialize BMS."""
         super().__init__(ble_device, keep_alive)
-        self._stream_data: dict[str, str] = {}
+        self._stream_data: dict[str, list[str]] = {}
 
     @staticmethod
     def matcher_dict_list() -> list[MatcherPattern]:
@@ -68,7 +69,7 @@ class BMS(BaseBMS):
         self._frame += data
         while (idx := self._frame.find(b"\r\n")) >= 0:
             line: str = self._frame[:idx].decode("ascii", errors="ignore").strip()
-            self._frame = self._frame[idx + 2 :]
+            del self._frame[:idx + 2]
 
             if not line:
                 continue
@@ -77,20 +78,19 @@ class BMS(BaseBMS):
                 self._log.debug("ignoring command response: %s", line)
                 continue
 
+            fields: list[str] = line.split(",")
             if line.startswith(BMS._HEAD_STATUS):
-                self._stream_data["status"] = line
-                self._msg_event.set()
+                if len(fields) >= BMS._MIN_FIELDS_STATUS:
+                    self._stream_data["status"] = fields
+                    self._msg_event.set()
                 continue
 
-            if "," in line and line[0] in "0123456789-":
-                if len(line.split(",")) >= BMS._MIN_FIELDS_PRIMARY:
-                    self._stream_data["primary"] = line
-                    self._msg_event.set()
+            if line[0] in digits and len(fields) >= BMS._MIN_FIELDS_PRIMARY:
+                self._stream_data["primary"] = fields
+                self._msg_event.set()
 
     @staticmethod
-    def _parse_primary(line: str) -> BMSSample:
-        fields: list[str] = line.split(",")
-
+    def _parse_primary(fields: list[str]) -> BMSSample:
         # Lithionics protocol reports temperatures in Fahrenheit.
         temp_values: list[float] = [
             round((int(fields[idx]) - 32) * 5 / 9, 3) for idx in (5, 6)
@@ -108,8 +108,7 @@ class BMS(BaseBMS):
         return result
 
     @staticmethod
-    def _parse_status(line: str) -> BMSSample:
-        fields: list[str] = line.split(",")
+    def _parse_status(fields: list[str]) -> BMSSample:
         result: BMSSample = {}
 
         # The status stream includes Remaining AH and Total Consumed AH.
@@ -126,10 +125,6 @@ class BMS(BaseBMS):
         while {"primary", "status"} - self._stream_data.keys():
             await asyncio.wait_for(self._wait_event(), timeout=BMS.TIMEOUT)
 
-        result: BMSSample = BMS._parse_primary(
-            self._stream_data["primary"]
-        ) | BMS._parse_status(
-            self._stream_data["status"]
-        )
+        result: BMSSample = BMS._parse_primary(self._stream_data["primary"]) | BMS._parse_status(self._stream_data["status"])
         self._stream_data.clear()
         return result
