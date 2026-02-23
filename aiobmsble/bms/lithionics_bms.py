@@ -80,9 +80,8 @@ class BMS(BaseBMS):
 
             fields: list[str] = line.split(",")
             if line.startswith(BMS._HEAD_STATUS):
-                if len(fields) >= BMS._MIN_FIELDS_STATUS:
-                    self._stream_data["status"] = fields
-                    self._msg_event.set()
+                self._stream_data["status"] = fields
+                self._msg_event.set()
                 continue
 
             if line[0] in digits and len(fields) >= BMS._MIN_FIELDS_PRIMARY:
