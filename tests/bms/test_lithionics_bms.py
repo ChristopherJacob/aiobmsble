@@ -1,5 +1,7 @@
 """Test the Lithionics BMS implementation."""
 
+import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable
 from typing import Final
 from uuid import UUID
@@ -55,21 +57,19 @@ class MockLithionicsBleakClient(MockBleakClient):
     """Emulate a Lithionics BMS BleakClient."""
 
     _RESP: bytes = STREAM_DATA
+    _task: asyncio.Task[None] | None = None
 
-    def _send_data(self) -> None:
-        assert self._notify_callback is not None
-        for notify_data in [
-            self._RESP[i : i + BT_FRAME_SIZE]
-            for i in range(0, len(self._RESP), BT_FRAME_SIZE)
-        ]:
-            self._notify_callback("MockLithionicsBleakClient", bytearray(notify_data))
+    async def _notify(self) -> None:
+        """Notify function."""
+        assert self._notify_callback, "write to characteristics but notification not enabled"
 
-    @property
-    def is_connected(self) -> bool:
-        """Mock connected."""
-        if self._connected:
-            self._send_data()  # trigger data for subsequent updates while connected
-        return self._connected
+        while True:
+            for notify_data in [
+                self._RESP[i : i + BT_FRAME_SIZE]
+                for i in range(0, len(self._RESP), BT_FRAME_SIZE)
+            ]:
+                self._notify_callback("MockLithionicsBleakClient", bytearray(notify_data))
+            await asyncio.sleep(0.1)
 
     async def start_notify(
         self,
@@ -81,7 +81,15 @@ class MockLithionicsBleakClient(MockBleakClient):
     ) -> None:
         """Mock start_notify."""
         await super().start_notify(char_specifier, callback)
-        self._send_data()
+        self._task = asyncio.create_task(self._notify())
+
+    async def disconnect(self) -> None:
+        """Mock disconnect and wait for send task."""
+        if self._task is not None:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+        await super().disconnect()
 
 
 async def test_update(
@@ -183,14 +191,15 @@ async def test_status_field_variants(
     patch_bleak_client(MockLithionicsBleakClient)
 
     bms = BMS(generate_ble_device(name="Lithionics"))
-    result = await bms.async_update()
+    if expected:
+        result = await bms.async_update()
+    else:
+        with pytest.raises(TimeoutError):
+            await bms.async_update()
+        await bms.disconnect()
+        return
 
     for key, value in expected.items():
         assert result.get(key) == value
-
-    if "cycle_charge" not in expected:
-        assert "cycle_charge" not in result
-    if "total_charge" not in expected:
-        assert "total_charge" not in result
 
     await bms.disconnect()

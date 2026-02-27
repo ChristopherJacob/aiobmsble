@@ -5,7 +5,6 @@ License: Apache-2.0, http://www.apache.org/licenses/
 """
 
 import asyncio
-from string import digits
 from typing import Final
 
 from bleak.backends.characteristic import BleakGATTCharacteristic
@@ -25,7 +24,7 @@ class BMS(BaseBMS):
     }
     _HEAD_STATUS: Final[str] = "&,"
     _MIN_FIELDS_PRIMARY: Final[int] = 10
-    _MIN_FIELDS_STATUS: Final[int] = 2
+    _MIN_FIELDS_STATUS: Final[int] = 3
 
     def __init__(self, ble_device: BLEDevice, keep_alive: bool = True) -> None:
         """Initialize BMS."""
@@ -79,13 +78,15 @@ class BMS(BaseBMS):
                 continue
 
             fields: list[str] = line.split(",")
-            if line.startswith(BMS._HEAD_STATUS):
+            if (
+                line.startswith(BMS._HEAD_STATUS)
+                and len(fields) >= BMS._MIN_FIELDS_STATUS
+            ):
                 self._stream_data["status"] = fields
-                self._msg_event.set()
-                continue
-
-            if line[0] in digits and len(fields) >= BMS._MIN_FIELDS_PRIMARY:
+            elif line[0].isdigit() and len(fields) >= BMS._MIN_FIELDS_PRIMARY:
                 self._stream_data["primary"] = fields
+
+            if self._stream_data.keys() >= {"primary", "status"}:
                 self._msg_event.set()
 
     @staticmethod
@@ -112,8 +113,7 @@ class BMS(BaseBMS):
 
         # The status stream includes Remaining AH and Total Consumed AH.
         # Expose them as common aiobmsble keys so HA can surface them.
-        if len(fields) > 2:
-            result["cycle_charge"] = float(fields[2])  # Remaining AH
+        result["cycle_charge"] = float(fields[2])  # Remaining AH
         if len(fields) > 3:
             result["total_charge"] = int(fields[3])  # Total Consumed AH
 
@@ -121,9 +121,12 @@ class BMS(BaseBMS):
 
     async def _async_update(self) -> BMSSample:
         """Update battery status information."""
-        while {"primary", "status"} - self._stream_data.keys():
-            await asyncio.wait_for(self._wait_event(), timeout=BMS.TIMEOUT)
+        self._stream_data.clear()
+        self._msg_event.clear()
+        await asyncio.wait_for(self._wait_event(), timeout=BMS.TIMEOUT)
 
-        result: BMSSample = BMS._parse_primary(self._stream_data["primary"]) | BMS._parse_status(self._stream_data["status"])
+        result: BMSSample = BMS._parse_primary(
+            self._stream_data["primary"]
+        ) | BMS._parse_status(self._stream_data["status"])
         self._stream_data.clear()
         return result
