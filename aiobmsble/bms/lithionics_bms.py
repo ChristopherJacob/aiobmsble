@@ -68,7 +68,7 @@ class BMS(BaseBMS):
         self._frame += data
         while (idx := self._frame.find(b"\r\n")) >= 0:
             line: str = self._frame[:idx].decode("ascii", errors="ignore").strip()
-            del self._frame[:idx + 2]
+            del self._frame[: idx + 2]
 
             if not line:
                 continue
@@ -91,12 +91,12 @@ class BMS(BaseBMS):
 
     @staticmethod
     def _parse_primary(fields: list[str]) -> BMSSample:
-        # Lithionics protocol reports temperatures in Fahrenheit.
-        temp_values: list[float] = [
+        # BMS reports temperatures in Fahrenheit.
+        temp_values: Final[list[float]] = [
             round((int(fields[idx]) - 32) * 5 / 9, 3) for idx in (5, 6)
         ]
 
-        result: BMSSample = {
+        return {
             "voltage": int(fields[0]) / 100,
             "cell_voltages": [int(value) / 100 for value in fields[1:5]],
             "temp_values": temp_values,
@@ -105,17 +105,13 @@ class BMS(BaseBMS):
             "battery_level": int(fields[8]),
             "problem_code": int(fields[9], 16),
         }
-        return result
 
     @staticmethod
     def _parse_status(fields: list[str]) -> BMSSample:
-        result: BMSSample = {}
 
-        # The status stream includes Remaining AH and Total Consumed AH.
-        # Expose them as common aiobmsble keys so HA can surface them.
-        result["cycle_charge"] = float(fields[2])  # Remaining AH
+        result: BMSSample = {"cycle_charge": float(fields[2])}
         if len(fields) > 3:
-            result["total_charge"] = int(fields[3])  # Total Consumed AH
+            result["total_charge"] = int(fields[3])
 
         return result
 
@@ -128,5 +124,5 @@ class BMS(BaseBMS):
         result: BMSSample = BMS._parse_primary(
             self._stream_data["primary"]
         ) | BMS._parse_status(self._stream_data["status"])
-        self._stream_data.clear()
+
         return result
