@@ -1,8 +1,8 @@
 """Test the Lithionics BMS implementation."""
 
 import asyncio
-import contextlib
 from collections.abc import Awaitable, Callable
+import contextlib
 from typing import Final
 from uuid import UUID
 
@@ -61,14 +61,18 @@ class MockLithionicsBleakClient(MockBleakClient):
 
     async def _notify(self) -> None:
         """Notify function."""
-        assert self._notify_callback, "write to characteristics but notification not enabled"
+        assert (
+            self._notify_callback
+        ), "write to characteristics but notification not enabled"
 
         while True:
             for notify_data in [
                 self._RESP[i : i + BT_FRAME_SIZE]
                 for i in range(0, len(self._RESP), BT_FRAME_SIZE)
             ]:
-                self._notify_callback("MockLithionicsBleakClient", bytearray(notify_data))
+                self._notify_callback(
+                    "MockLithionicsBleakClient", bytearray(notify_data)
+                )
             await asyncio.sleep(0.1)
 
     async def start_notify(
