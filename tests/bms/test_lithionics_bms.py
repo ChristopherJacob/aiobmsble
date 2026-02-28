@@ -184,6 +184,7 @@ def test_uuid_tx_not_implemented() -> None:
 async def test_status_field_variants(
     monkeypatch: pytest.MonkeyPatch,
     patch_bleak_client,
+    patch_bms_timeout,
     status_line: str,
     expected: BMSSample,
 ) -> None:
@@ -198,6 +199,7 @@ async def test_status_field_variants(
     if expected:
         result = await bms.async_update()
     else:
+        patch_bms_timeout("lithionics_bms")
         with pytest.raises(TimeoutError):
             await bms.async_update()
         await bms.disconnect()
